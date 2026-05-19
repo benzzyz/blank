@@ -2641,6 +2641,9 @@ static void R_StudioSetupRenderer( int rendermode )
 		for( i = 0; i < phdr->numbones; i++ )
 			Matrix3x4_ConcatTransforms( g_studio.worldtransform[i], g_studio.bonestransform[i], boneinfo[i].poseToBone );
 	}
+
+	if( r_studio_xray.value > 0.0f && RI.currententity && RI.currententity != tr.viewent )
+		pglDepthFunc( GL_ALWAYS );
 }
 
 /*
@@ -2660,6 +2663,9 @@ static void R_StudioRestoreRenderer( void )
 	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
 	pglShadeModel( GL_FLAT );
 	m_fDoRemap = false;
+
+	if( r_studio_xray.value > 0.0f )
+		pglDepthFunc( GL_LEQUAL );
 }
 
 /*
@@ -2813,7 +2819,6 @@ StudioRenderFinal
 static void R_StudioRenderFinal( void )
 {
 	int	i, rendermode;
-	qboolean chams = ( r_studio_xray.value > 0.0f ) && ( RI.currententity != tr.viewent );
 
 	rendermode = R_StudioGetForceFaceFlags() ? kRenderTransAdd : RI.currententity->curstate.rendermode;
 	R_StudioSetupRenderer( rendermode );
@@ -2833,17 +2838,7 @@ static void R_StudioRenderFinal( void )
 			R_StudioSetupModel( i, (void**)&m_pBodyPart, (void**)&m_pSubModel );
 
 			GL_StudioSetRenderMode( rendermode );
-			if( chams )
-			{
-				pglDepthFunc( GL_ALWAYS );
-				pglDepthMask( GL_FALSE );
-			}
 			R_StudioDrawPoints();
-			if( chams )
-			{
-				pglDepthFunc( GL_LEQUAL );
-				pglDepthMask( GL_TRUE );
-			}
 			GL_StudioDrawShadow();
 		}
 	}
