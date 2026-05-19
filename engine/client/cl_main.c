@@ -746,7 +746,7 @@ static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
 		return;
 
 	VectorCopy( cl.simorg, eye );
-	VectorAdd( eye, self->curstate.view_ofs, eye );
+	eye[2] += 28.0f; // approximate standing view height; close enough for LOS
 
 	AngleVectors( angles, fwd, NULL, NULL );
 
