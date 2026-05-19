@@ -653,28 +653,17 @@ Print the cheat cvar reference.
 */
 static void CL_Benry3d_f( void )
 {
-	Con_Printf( "\n" );
 	Con_Printf( "===== benry3d cheats =====\n" );
-	Con_Printf( "\n" );
-	Con_Printf( "[visuals]\n" );
-	Con_Printf( "  r_studio_xray <0|1>          see-through models (depth disabled)\n" );
-	Con_Printf( "  r_studio_chams <0|1>         solid-color silhouettes; combine with xray\n" );
-	Con_Printf( "  r_studio_esp <0|1>           wireframe bounding box drawn through walls\n" );
-	Con_Printf( "\n" );
-	Con_Printf( "[movement]\n" );
-	Con_Printf( "  cl_autobhop <0|1>            hold +jump to chain bhops automatically\n" );
-	Con_Printf( "  cl_fov_override <n>          force fov 10..179 (0 = let game decide)\n" );
-	Con_Printf( "\n" );
-	Con_Printf( "[aim assist]\n" );
-	Con_Printf( "  cl_aimassist <0..3>          0=off  1=magnetism  2=snap-on-fire  3=both\n" );
-	Con_Printf( "  cl_aimassist_fov <deg>       cone half-angle (default 8)\n" );
-	Con_Printf( "  cl_aimassist_strength <0..1> magnetism pull factor (default 0.35)\n" );
-	Con_Printf( "  cl_aimassist_smooth <0..1>   extra smoothing, higher = smoother (0.5)\n" );
-	Con_Printf( "  cl_aimassist_bone <0..2>     0=origin  1=center mass  2=head\n" );
-	Con_Printf( "  cl_aimassist_maxdist <n>     max target distance, units (default 4096)\n" );
-	Con_Printf( "\n" );
-	Con_Printf( "scope: SP and LAN bots only. type benry3d any time for this list.\n" );
-	Con_Printf( "\n" );
+	Con_Printf( "r_studio_xray <0|1>           see-through models\n" );
+	Con_Printf( "r_studio_esp <0|1>            wireframe bbox through walls\n" );
+	Con_Printf( "cl_autobhop <0|1>             hold +jump to chain bhops\n" );
+	Con_Printf( "cl_fov_override <n>           force fov 10..179 (0=off)\n" );
+	Con_Printf( "cl_aimassist <0..3>           0=off 1=magnet 2=snap 3=both\n" );
+	Con_Printf( "cl_aimassist_fov <deg>        cone half-angle (8)\n" );
+	Con_Printf( "cl_aimassist_strength <0..1>  pull factor (0.35)\n" );
+	Con_Printf( "cl_aimassist_smooth <0..1>    smoothing (0.5)\n" );
+	Con_Printf( "cl_aimassist_bone <0..2>      0=origin 1=center 2=head\n" );
+	Con_Printf( "cl_aimassist_maxdist <n>      max range (4096)\n" );
 }
 
 /*
@@ -801,12 +790,14 @@ static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
 
 		if( !e || e == self || !e->model )
 			continue;
-		if( e->curstate.solid == SOLID_NOT )
-			continue;
-		if( e->curstate.movetype == MOVETYPE_NONE )
-			continue;
-		// only studio models (NPCs, players, monsters); skip brushes/sprites
+		// only studio models (NPCs, monsters, players, bots)
 		if( e->model->type != mod_studio )
+			continue;
+		// skip the local viewmodel
+		if( e == &clgame.viewent )
+			continue;
+		// skip entities sitting at world origin (uninitialized / not yet streamed)
+		if( e->origin[0] == 0.0f && e->origin[1] == 0.0f && e->origin[2] == 0.0f )
 			continue;
 
 		CL_AimAssistTargetPos( e, bone, target_pos );

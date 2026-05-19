@@ -123,7 +123,6 @@ typedef struct
 CVAR_DEFINE_AUTO( r_studio_sort_textures, "0", FCVAR_GLCONFIG, "change draw order for additive meshes" );
 CVAR_DEFINE_AUTO( r_studio_drawelements, "1", FCVAR_GLCONFIG, "use glDrawElements for studiomodels" );
 CVAR_DEFINE_AUTO( r_studio_xray, "0", 0, "render studio models with depth test disabled (debug)" );
-CVAR_DEFINE_AUTO( r_studio_chams, "0", 0, "render studio models textureless and fullbright (debug)" );
 CVAR_DEFINE_AUTO( r_studio_esp, "0", 0, "draw studio model bounding boxes through walls (debug)" );
 static cvar_t			*cl_righthand = NULL;
 
@@ -1376,12 +1375,6 @@ static void R_StudioLighting( float *lv, int bone, int flags, vec3_t normal )
 {
 	float 	illum;
 
-	if( r_studio_chams.value > 0.0f && RI.currententity && RI.currententity != tr.viewent )
-	{
-		*lv = 1.0f;
-		return;
-	}
-
 	if( FBitSet( flags, STUDIO_NF_FULLBRIGHT ))
 	{
 		*lv = 1.0f;
@@ -1560,8 +1553,6 @@ static void R_StudioSetupSkin( studiohdr_t *ptexturehdr, int index )
 	if( !ptexture ) ptexture = (mstudiotexture_t *)((byte *)ptexturehdr + ptexturehdr->textureindex); // fallback
 
 	if( r_lightmap->value && !r_fullbright->value )
-		GL_Bind( XASH_TEXTURE0, tr.whiteTexture );
-	else if( r_studio_chams.value > 0.0f && RI.currententity && RI.currententity != tr.viewent )
 		GL_Bind( XASH_TEXTURE0, tr.whiteTexture );
 	else GL_Bind( XASH_TEXTURE0, ptexture[index].index );
 }
@@ -2652,7 +2643,7 @@ static void R_StudioSetupRenderer( int rendermode )
 			Matrix3x4_ConcatTransforms( g_studio.worldtransform[i], g_studio.bonestransform[i], boneinfo[i].poseToBone );
 	}
 
-	if(( r_studio_xray.value > 0.0f || r_studio_chams.value > 0.0f ) && RI.currententity && RI.currententity != tr.viewent )
+	if(( r_studio_xray.value > 0.0f ) && RI.currententity && RI.currententity != tr.viewent )
 		pglDepthFunc( GL_ALWAYS );
 }
 
@@ -2716,7 +2707,7 @@ static void R_StudioRestoreRenderer( void )
 	pglShadeModel( GL_FLAT );
 	m_fDoRemap = false;
 
-	if( r_studio_xray.value > 0.0f || r_studio_chams.value > 0.0f )
+	if( r_studio_xray.value > 0.0f )
 		pglDepthFunc( GL_LEQUAL );
 
 	if( r_studio_esp.value > 0.0f )
