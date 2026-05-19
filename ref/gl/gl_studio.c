@@ -123,6 +123,7 @@ typedef struct
 CVAR_DEFINE_AUTO( r_studio_sort_textures, "0", FCVAR_GLCONFIG, "change draw order for additive meshes" );
 CVAR_DEFINE_AUTO( r_studio_drawelements, "1", FCVAR_GLCONFIG, "use glDrawElements for studiomodels" );
 CVAR_DEFINE_AUTO( r_studio_xray, "0", 0, "render studio models with depth test disabled (debug)" );
+CVAR_DEFINE_AUTO( r_studio_esp, "0", 0, "draw studio model bounding boxes through walls (debug)" );
 static cvar_t			*cl_righthand = NULL;
 
 static r_studio_interface_t	*pStudioDraw;
@@ -1373,6 +1374,12 @@ R_StudioLighting
 static void R_StudioLighting( float *lv, int bone, int flags, vec3_t normal )
 {
 	float 	illum;
+
+	if( r_studio_xray.value > 0.0f && RI.currententity && RI.currententity != tr.viewent )
+	{
+		*lv = 1.0f;
+		return;
+	}
 
 	if( FBitSet( flags, STUDIO_NF_FULLBRIGHT ))
 	{
@@ -2652,6 +2659,48 @@ R_StudioRestoreRenderer
 
 ===============
 */
+static void R_StudioDrawESP( void )
+{
+	vec3_t	p[8];
+	int	i;
+	static const int edges[12][2] = {
+		{0,1},{1,3},{3,2},{2,0},
+		{4,5},{5,7},{7,6},{6,4},
+		{0,4},{1,5},{2,6},{3,7}
+	};
+
+	if( !RI.currententity || RI.currententity == tr.viewent )
+		return;
+
+	if( !R_StudioComputeBBox( p ))
+		return;
+
+	pglDisable( GL_TEXTURE_2D );
+	pglDisable( GL_DEPTH_TEST );
+	pglDepthMask( GL_FALSE );
+	pglLineWidth( 2.0f );
+	pglColor3f( 0.0f, 1.0f, 0.0f );
+
+	pglBegin( GL_LINES );
+	for( i = 0; i < 12; i++ )
+	{
+		pglVertex3fv( p[edges[i][0]] );
+		pglVertex3fv( p[edges[i][1]] );
+	}
+	pglEnd();
+
+	pglLineWidth( 1.0f );
+	pglDepthMask( GL_TRUE );
+	pglEnable( GL_DEPTH_TEST );
+	pglEnable( GL_TEXTURE_2D );
+}
+
+/*
+===============
+R_StudioRestoreRenderer
+
+===============
+*/
 static void R_StudioRestoreRenderer( void )
 {
 	if( g_studio.rendermode != kRenderNormal )
@@ -2666,6 +2715,9 @@ static void R_StudioRestoreRenderer( void )
 
 	if( r_studio_xray.value > 0.0f )
 		pglDepthFunc( GL_LEQUAL );
+
+	if( r_studio_esp.value > 0.0f )
+		R_StudioDrawESP();
 }
 
 /*
