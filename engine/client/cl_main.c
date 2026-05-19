@@ -49,6 +49,14 @@ static CVAR_DEFINE_AUTO( rcon_address, "", FCVAR_PRIVILEGED, "remote control add
 CVAR_DEFINE_AUTO( cl_timeout, "60", 0, "connect timeout (in-seconds)" );
 CVAR_DEFINE_AUTO( cl_nopred, "0", FCVAR_ARCHIVE|FCVAR_USERINFO, "disable client movement prediction" );
 static CVAR_DEFINE_AUTO( cl_fov_override, "0", FCVAR_ARCHIVE, "if non-zero, force this fov value (bypasses game dll)" );
+static CVAR_DEFINE_AUTO( cl_autobhop, "0", FCVAR_ARCHIVE, "auto-rejump while +jump is held" );
+static CVAR_DEFINE_AUTO( cl_aimassist, "0", FCVAR_ARCHIVE, "0=off, 1=magnetism, 2=snap on +attack, 3=both" );
+static CVAR_DEFINE_AUTO( cl_aimassist_fov, "8", FCVAR_ARCHIVE, "aim assist FOV cone half-angle in degrees" );
+static CVAR_DEFINE_AUTO( cl_aimassist_strength, "0.35", FCVAR_ARCHIVE, "aim assist magnetism pull factor (0..1)" );
+static CVAR_DEFINE_AUTO( cl_aimassist_smooth, "0.5", FCVAR_ARCHIVE, "extra smoothing on magnetism (0..1, higher=smoother)" );
+static CVAR_DEFINE_AUTO( cl_aimassist_targets, "1", FCVAR_ARCHIVE, "bitmask: 1=monsters/NPCs, 2=players" );
+static CVAR_DEFINE_AUTO( cl_aimassist_bone, "1", FCVAR_ARCHIVE, "0=origin, 1=center mass, 2=head" );
+static CVAR_DEFINE_AUTO( cl_aimassist_maxdist, "4096", FCVAR_ARCHIVE, "max target distance in units" );
 static CVAR_DEFINE_AUTO( cl_nodelta, "0", 0, "disable delta-compression for server messages" );
 CVAR_DEFINE( cl_crosshair, "crosshair", "1", FCVAR_ARCHIVE, "show weapon chrosshair" );
 static CVAR_DEFINE_AUTO( cl_cmdbackup, "10", FCVAR_ARCHIVE, "how many additional history commands are sent" );
@@ -639,6 +647,200 @@ static void CL_UpdateClientData( void )
 
 /*
 =================
+CL_AutoBhop
+
+If +jump is held and we're airborne, suppress IN_JUMP for this tick so the
+next on-ground tick presents a fresh edge to PM_Jump.
+=================
+*/
+static void CL_AutoBhop( usercmd_t *cmd )
+{
+	if( cl_autobhop.value <= 0.0f )
+		return;
+
+	if( !( cmd->buttons & IN_JUMP ))
+		return;
+
+	if( cl.local.onground == -1 )
+		cmd->buttons &= ~IN_JUMP;
+}
+
+static qboolean CL_AimAssistTargetPos( cl_entity_t *e, int bone, vec3_t out )
+{
+	vec3_t mins, maxs;
+
+	VectorCopy( e->curstate.mins, mins );
+	VectorCopy( e->curstate.maxs, maxs );
+
+	switch( bone )
+	{
+	case 0:
+		VectorCopy( e->origin, out );
+		break;
+	case 2:
+		VectorCopy( e->origin, out );
+		out[2] += maxs[2] * 0.9f;
+		break;
+	case 1:
+	default:
+		out[0] = e->origin[0] + ( mins[0] + maxs[0] ) * 0.5f;
+		out[1] = e->origin[1] + ( mins[1] + maxs[1] ) * 0.5f;
+		out[2] = e->origin[2] + ( mins[2] + maxs[2] ) * 0.5f;
+		break;
+	}
+	return true;
+}
+
+/*
+=================
+CL_AimAssist
+
+Called per-frame from CL_CreateCmd after the game's CL_CreateMove. Picks the
+nearest-to-crosshair valid target inside the FOV cone with clear LOS, then
+either bends viewangles toward it (magnetism) or snaps on a fresh +attack edge.
+=================
+*/
+static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
+{
+	static int prev_buttons;
+	cl_entity_t *self, *best = NULL;
+	vec3_t eye, fwd, target_pos, dir, target_angles, delta;
+	float best_score = 1e9f;
+	float fov_cone, max_dist, strength, smooth;
+	int   mode, targets, bone;
+	int   i;
+	int   attack_edge;
+
+	mode = (int)cl_aimassist.value;
+	if( mode <= 0 )
+	{
+		prev_buttons = cmd->buttons;
+		return;
+	}
+
+	if( cls.state != ca_active || cl.paused || cls.demoplayback )
+	{
+		prev_buttons = cmd->buttons;
+		return;
+	}
+
+	self = CL_GetLocalPlayer();
+	if( !self )
+	{
+		prev_buttons = cmd->buttons;
+		return;
+	}
+
+	fov_cone = bound( 0.5f, cl_aimassist_fov.value, 90.0f );
+	max_dist = Q_max( 64.0f, cl_aimassist_maxdist.value );
+	strength = bound( 0.0f, cl_aimassist_strength.value, 1.0f );
+	smooth   = bound( 0.0f, cl_aimassist_smooth.value, 0.99f );
+	targets  = (int)cl_aimassist_targets.value;
+	bone     = (int)cl_aimassist_bone.value;
+
+	attack_edge = ( cmd->buttons & IN_ATTACK ) && !( prev_buttons & IN_ATTACK );
+	prev_buttons = cmd->buttons;
+
+	// snap-only mode: bail unless this is the press edge
+	if( mode == 2 && !attack_edge )
+		return;
+
+	VectorCopy( cl.simorg, eye );
+	VectorAdd( eye, self->curstate.view_ofs, eye );
+
+	AngleVectors( angles, fwd, NULL, NULL );
+
+	for( i = 1; i < clgame.maxEntities; i++ )
+	{
+		cl_entity_t *e = CL_GetEntityByIndex( i );
+		float dist, dot, ang;
+		pmtrace_t tr;
+
+		if( !e || e == self || !e->model )
+			continue;
+		if( e->curstate.solid == SOLID_NOT )
+			continue;
+		if( e->curstate.movetype == MOVETYPE_NONE )
+			continue;
+
+		if( e->player )
+		{
+			if( !( targets & 2 ))
+				continue;
+		}
+		else
+		{
+			if( !( targets & 1 ))
+				continue;
+			// world brushes / non-monsters: skip anything not a studio model
+			if( e->model->type != mod_studio )
+				continue;
+		}
+
+		CL_AimAssistTargetPos( e, bone, target_pos );
+
+		VectorSubtract( target_pos, eye, dir );
+		dist = VectorLength( dir );
+		if( dist < 1.0f || dist > max_dist )
+			continue;
+		VectorScale( dir, 1.0f / dist, dir );
+
+		dot = DotProduct( dir, fwd );
+		if( dot <= 0.0f )
+			continue;
+		ang = RAD2DEG( acosf( bound( -1.0f, dot, 1.0f )));
+		if( ang > fov_cone )
+			continue;
+
+		// LOS: trace world only, ignore studio models
+		tr = CL_TraceLine( eye, target_pos, PM_STUDIO_IGNORE );
+		if( tr.fraction < 1.0f )
+			continue;
+
+		if( ang < best_score )
+		{
+			best_score = ang;
+			best = e;
+		}
+	}
+
+	if( !best )
+		return;
+
+	// recompute target_angles from the chosen target
+	CL_AimAssistTargetPos( best, bone, target_pos );
+	VectorSubtract( target_pos, eye, dir );
+	VectorNormalize( dir );
+	VectorAngles( dir, target_angles );
+
+	delta[PITCH] = target_angles[PITCH] - angles[PITCH];
+	delta[YAW]   = target_angles[YAW]   - angles[YAW];
+	delta[ROLL]  = 0.0f;
+
+	// wrap to [-180,180]
+	while( delta[PITCH] >  180.0f ) delta[PITCH] -= 360.0f;
+	while( delta[PITCH] < -180.0f ) delta[PITCH] += 360.0f;
+	while( delta[YAW]   >  180.0f ) delta[YAW]   -= 360.0f;
+	while( delta[YAW]   < -180.0f ) delta[YAW]   += 360.0f;
+
+	{
+		float pull;
+
+		if( mode == 2 || ( mode == 3 && attack_edge ))
+			pull = 1.0f; // hard snap on fire
+		else
+			pull = strength * ( 1.0f - smooth );
+
+		angles[PITCH] += delta[PITCH] * pull;
+		angles[YAW]   += delta[YAW]   * pull;
+	}
+
+	VectorCopy( angles, cmd->viewangles );
+	VectorCopy( angles, cl.viewangles );
+}
+
+/*
+=================
 CL_CreateCmd
 =================
 */
@@ -703,6 +905,12 @@ static void CL_CreateCmd( void )
 	Platform_PreCreateMove();
 	clgame.dllFuncs.CL_CreateMove( host.frametime, cmd, active );
 	IN_EngineAppendMove( host.frametime, cmd, active );
+
+	if( !cls.demoplayback && active )
+	{
+		CL_AutoBhop( cmd );
+		CL_AimAssist( cmd, cmd->viewangles );
+	}
 
 	CL_PopPMStates();
 
@@ -3421,6 +3629,14 @@ static void CL_InitLocal( void )
 
 	Cvar_RegisterVariable( &showpause );
 	Cvar_RegisterVariable( &cl_fov_override );
+	Cvar_RegisterVariable( &cl_autobhop );
+	Cvar_RegisterVariable( &cl_aimassist );
+	Cvar_RegisterVariable( &cl_aimassist_fov );
+	Cvar_RegisterVariable( &cl_aimassist_strength );
+	Cvar_RegisterVariable( &cl_aimassist_smooth );
+	Cvar_RegisterVariable( &cl_aimassist_targets );
+	Cvar_RegisterVariable( &cl_aimassist_bone );
+	Cvar_RegisterVariable( &cl_aimassist_maxdist );
 	Cvar_RegisterVariable( &mp_decals );
 	Cvar_RegisterVariable( &dev_overview );
 	Cvar_RegisterVariable( &cl_resend );
