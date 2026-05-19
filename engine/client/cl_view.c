@@ -307,7 +307,7 @@ static void V_GetRefParams( ref_params_t *fd, ref_viewpass_t *rvp )
 	rvp->viewentity = fd->viewentity;
 
 	// calc FOV
-	rvp->fov_x = bound( 10.0f, cl.local.scr_fov, 150.0f ); // this is a final fov value
+	rvp->fov_x = bound( 10.0f, cl.local.scr_fov, 179.0f ); // this is a final fov value
 
 	// first we need to compute FOV and other things that needs for frustum properly work
 	rvp->fov_y = V_CalcFov( &rvp->fov_x, clgame.viewport[2], clgame.viewport[3] );

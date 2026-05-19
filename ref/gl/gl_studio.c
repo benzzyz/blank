@@ -122,6 +122,7 @@ typedef struct
 // studio-related cvars
 CVAR_DEFINE_AUTO( r_studio_sort_textures, "0", FCVAR_GLCONFIG, "change draw order for additive meshes" );
 CVAR_DEFINE_AUTO( r_studio_drawelements, "1", FCVAR_GLCONFIG, "use glDrawElements for studiomodels" );
+CVAR_DEFINE_AUTO( r_studio_xray, "0", 0, "render studio models with depth test disabled (debug)" );
 static cvar_t			*cl_righthand = NULL;
 
 static r_studio_interface_t	*pStudioDraw;
@@ -2812,9 +2813,13 @@ StudioRenderFinal
 static void R_StudioRenderFinal( void )
 {
 	int	i, rendermode;
+	qboolean chams = ( r_studio_xray.value > 0.0f ) && ( RI.currententity != tr.viewent );
 
 	rendermode = R_StudioGetForceFaceFlags() ? kRenderTransAdd : RI.currententity->curstate.rendermode;
 	R_StudioSetupRenderer( rendermode );
+
+	if( chams )
+		pglDisable( GL_DEPTH_TEST );
 
 	if( r_drawentities->value == 2 )
 	{
@@ -2885,6 +2890,9 @@ static void R_StudioRenderFinal( void )
 		pglEnable( GL_DEPTH_TEST );
 		pglEnable( GL_TEXTURE_2D );
 	}
+
+	if( chams )
+		pglEnable( GL_DEPTH_TEST );
 
 	R_StudioRestoreRenderer();
 }
