@@ -2818,9 +2818,6 @@ static void R_StudioRenderFinal( void )
 	rendermode = R_StudioGetForceFaceFlags() ? kRenderTransAdd : RI.currententity->curstate.rendermode;
 	R_StudioSetupRenderer( rendermode );
 
-	if( chams )
-		pglDisable( GL_DEPTH_TEST );
-
 	if( r_drawentities->value == 2 )
 	{
 		R_StudioDrawBones();
@@ -2836,7 +2833,17 @@ static void R_StudioRenderFinal( void )
 			R_StudioSetupModel( i, (void**)&m_pBodyPart, (void**)&m_pSubModel );
 
 			GL_StudioSetRenderMode( rendermode );
+			if( chams )
+			{
+				pglDepthFunc( GL_ALWAYS );
+				pglDepthMask( GL_FALSE );
+			}
 			R_StudioDrawPoints();
+			if( chams )
+			{
+				pglDepthFunc( GL_LEQUAL );
+				pglDepthMask( GL_TRUE );
+			}
 			GL_StudioDrawShadow();
 		}
 	}
@@ -2890,9 +2897,6 @@ static void R_StudioRenderFinal( void )
 		pglEnable( GL_DEPTH_TEST );
 		pglEnable( GL_TEXTURE_2D );
 	}
-
-	if( chams )
-		pglEnable( GL_DEPTH_TEST );
 
 	R_StudioRestoreRenderer();
 }

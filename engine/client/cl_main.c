@@ -48,6 +48,7 @@ CVAR_DEFINE( cl_draw_beams, "r_drawbeams", "1", FCVAR_CHEAT, "render beams" );
 static CVAR_DEFINE_AUTO( rcon_address, "", FCVAR_PRIVILEGED, "remote control address" );
 CVAR_DEFINE_AUTO( cl_timeout, "60", 0, "connect timeout (in-seconds)" );
 CVAR_DEFINE_AUTO( cl_nopred, "0", FCVAR_ARCHIVE|FCVAR_USERINFO, "disable client movement prediction" );
+static CVAR_DEFINE_AUTO( cl_fov_override, "0", FCVAR_ARCHIVE, "if non-zero, force this fov value (bypasses game dll)" );
 static CVAR_DEFINE_AUTO( cl_nodelta, "0", 0, "disable delta-compression for server messages" );
 CVAR_DEFINE( cl_crosshair, "crosshair", "1", FCVAR_ARCHIVE, "show weapon chrosshair" );
 static CVAR_DEFINE_AUTO( cl_cmdbackup, "10", FCVAR_ARCHIVE, "how many additional history commands are sent" );
@@ -631,6 +632,9 @@ static void CL_UpdateClientData( void )
 		VectorCopy( cdat.viewangles, cl.viewangles );
 		cl.local.scr_fov = cdat.fov;
 	}
+
+	if( cl_fov_override.value >= 10.0f && cl_fov_override.value <= 179.0f )
+		cl.local.scr_fov = cl_fov_override.value;
 }
 
 /*
@@ -3416,6 +3420,7 @@ static void CL_InitLocal( void )
 	Cvar_RegisterVariable( &cl_autorecord );
 
 	Cvar_RegisterVariable( &showpause );
+	Cvar_RegisterVariable( &cl_fov_override );
 	Cvar_RegisterVariable( &mp_decals );
 	Cvar_RegisterVariable( &dev_overview );
 	Cvar_RegisterVariable( &cl_resend );
