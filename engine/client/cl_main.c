@@ -54,7 +54,6 @@ static CVAR_DEFINE_AUTO( cl_aimassist, "0", FCVAR_ARCHIVE, "0=off, 1=magnetism, 
 static CVAR_DEFINE_AUTO( cl_aimassist_fov, "8", FCVAR_ARCHIVE, "aim assist FOV cone half-angle in degrees" );
 static CVAR_DEFINE_AUTO( cl_aimassist_strength, "0.35", FCVAR_ARCHIVE, "aim assist magnetism pull factor (0..1)" );
 static CVAR_DEFINE_AUTO( cl_aimassist_smooth, "0.5", FCVAR_ARCHIVE, "extra smoothing on magnetism (0..1, higher=smoother)" );
-static CVAR_DEFINE_AUTO( cl_aimassist_targets, "1", FCVAR_ARCHIVE, "bitmask: 1=monsters/NPCs, 2=players" );
 static CVAR_DEFINE_AUTO( cl_aimassist_bone, "1", FCVAR_ARCHIVE, "0=origin, 1=center mass, 2=head" );
 static CVAR_DEFINE_AUTO( cl_aimassist_maxdist, "4096", FCVAR_ARCHIVE, "max target distance in units" );
 static CVAR_DEFINE_AUTO( cl_nodelta, "0", 0, "disable delta-compression for server messages" );
@@ -647,6 +646,39 @@ static void CL_UpdateClientData( void )
 
 /*
 =================
+CL_Benry3d_f
+
+Print the cheat cvar reference.
+=================
+*/
+static void CL_Benry3d_f( void )
+{
+	Con_Printf( "\n" );
+	Con_Printf( "===== benry3d cheats =====\n" );
+	Con_Printf( "\n" );
+	Con_Printf( "[visuals]\n" );
+	Con_Printf( "  r_studio_xray <0|1>          see-through models (depth disabled)\n" );
+	Con_Printf( "  r_studio_chams <0|1>         solid-color silhouettes; combine with xray\n" );
+	Con_Printf( "  r_studio_esp <0|1>           wireframe bounding box drawn through walls\n" );
+	Con_Printf( "\n" );
+	Con_Printf( "[movement]\n" );
+	Con_Printf( "  cl_autobhop <0|1>            hold +jump to chain bhops automatically\n" );
+	Con_Printf( "  cl_fov_override <n>          force fov 10..179 (0 = let game decide)\n" );
+	Con_Printf( "\n" );
+	Con_Printf( "[aim assist]\n" );
+	Con_Printf( "  cl_aimassist <0..3>          0=off  1=magnetism  2=snap-on-fire  3=both\n" );
+	Con_Printf( "  cl_aimassist_fov <deg>       cone half-angle (default 8)\n" );
+	Con_Printf( "  cl_aimassist_strength <0..1> magnetism pull factor (default 0.35)\n" );
+	Con_Printf( "  cl_aimassist_smooth <0..1>   extra smoothing, higher = smoother (0.5)\n" );
+	Con_Printf( "  cl_aimassist_bone <0..2>     0=origin  1=center mass  2=head\n" );
+	Con_Printf( "  cl_aimassist_maxdist <n>     max target distance, units (default 4096)\n" );
+	Con_Printf( "\n" );
+	Con_Printf( "scope: SP and LAN bots only. type benry3d any time for this list.\n" );
+	Con_Printf( "\n" );
+}
+
+/*
+=================
 CL_AutoBhop
 
 If +jump is held and we're airborne, suppress IN_JUMP for this tick so the
@@ -669,8 +701,19 @@ static qboolean CL_AimAssistTargetPos( cl_entity_t *e, int bone, vec3_t out )
 {
 	vec3_t mins, maxs;
 
-	VectorCopy( e->curstate.mins, mins );
-	VectorCopy( e->curstate.maxs, maxs );
+	// curstate.mins/maxs aren't reliably populated on the client; use the
+	// model's local bbox instead. Studio bboxes are entity-local so just
+	// add to origin.
+	if( e->model )
+	{
+		VectorCopy( e->model->mins, mins );
+		VectorCopy( e->model->maxs, maxs );
+	}
+	else
+	{
+		VectorClear( mins );
+		VectorClear( maxs );
+	}
 
 	switch( bone )
 	{
@@ -704,10 +747,11 @@ static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
 {
 	static int prev_buttons;
 	cl_entity_t *self, *best = NULL;
-	vec3_t eye, fwd, target_pos, dir, target_angles, delta;
+	vec3_t eye, fwd, target_pos, dir, delta;
 	float best_score = 1e9f;
 	float fov_cone, max_dist, strength, smooth;
-	int   mode, targets, bone;
+	float target_pitch, target_yaw, horiz;
+	int   mode, bone;
 	int   i;
 	int   attack_edge;
 
@@ -735,7 +779,6 @@ static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
 	max_dist = Q_max( 64.0f, cl_aimassist_maxdist.value );
 	strength = bound( 0.0f, cl_aimassist_strength.value, 1.0f );
 	smooth   = bound( 0.0f, cl_aimassist_smooth.value, 0.99f );
-	targets  = (int)cl_aimassist_targets.value;
 	bone     = (int)cl_aimassist_bone.value;
 
 	attack_edge = ( cmd->buttons & IN_ATTACK ) && !( prev_buttons & IN_ATTACK );
@@ -762,20 +805,9 @@ static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
 			continue;
 		if( e->curstate.movetype == MOVETYPE_NONE )
 			continue;
-
-		if( e->player )
-		{
-			if( !( targets & 2 ))
-				continue;
-		}
-		else
-		{
-			if( !( targets & 1 ))
-				continue;
-			// world brushes / non-monsters: skip anything not a studio model
-			if( e->model->type != mod_studio )
-				continue;
-		}
+		// only studio models (NPCs, players, monsters); skip brushes/sprites
+		if( e->model->type != mod_studio )
+			continue;
 
 		CL_AimAssistTargetPos( e, bone, target_pos );
 
@@ -807,14 +839,19 @@ static void CL_AimAssist( usercmd_t *cmd, vec3_t angles )
 	if( !best )
 		return;
 
-	// recompute target_angles from the chosen target
+	// recompute target direction and compute angles directly. Quake pitch
+	// convention: positive PITCH = looking DOWN, so negate the elevation.
 	CL_AimAssistTargetPos( best, bone, target_pos );
 	VectorSubtract( target_pos, eye, dir );
-	VectorNormalize( dir );
-	VectorAngles( dir, target_angles );
+	if( VectorNormalizeLength( dir ) < 1.0f )
+		return;
 
-	delta[PITCH] = target_angles[PITCH] - angles[PITCH];
-	delta[YAW]   = target_angles[YAW]   - angles[YAW];
+	horiz = sqrtf( dir[0] * dir[0] + dir[1] * dir[1] );
+	target_yaw   = RAD2DEG( atan2f( dir[1], dir[0] ));
+	target_pitch = -RAD2DEG( atan2f( dir[2], horiz ));
+
+	delta[PITCH] = target_pitch - angles[PITCH];
+	delta[YAW]   = target_yaw   - angles[YAW];
 	delta[ROLL]  = 0.0f;
 
 	// wrap to [-180,180]
@@ -3634,7 +3671,6 @@ static void CL_InitLocal( void )
 	Cvar_RegisterVariable( &cl_aimassist_fov );
 	Cvar_RegisterVariable( &cl_aimassist_strength );
 	Cvar_RegisterVariable( &cl_aimassist_smooth );
-	Cvar_RegisterVariable( &cl_aimassist_targets );
 	Cvar_RegisterVariable( &cl_aimassist_bone );
 	Cvar_RegisterVariable( &cl_aimassist_maxdist );
 	Cvar_RegisterVariable( &mp_decals );
@@ -3736,6 +3772,7 @@ static void CL_InitLocal( void )
 	Cmd_AddCommand ("cd", CL_PlayCDTrack_f, "Play cd-track (not real cd-player of course)" );
 	Cmd_AddCommand ("mp3", CL_PlayCDTrack_f, "Play mp3-track (based on virtual cd-player)" );
 	Cmd_AddCommand ("waveplaylen", CL_WavePlayLen_f, "Get approximate length of wave file");
+	Cmd_AddCommand ("benry3d", CL_Benry3d_f, "list benry3d cheat cvars and what they do" );
 
 	Cmd_AddRestrictedCommand ("setinfo", CL_SetInfo_f, "examine or change the userinfo string (alias of userinfo)" );
 	Cmd_AddRestrictedCommand ("userinfo", CL_SetInfo_f, "examine or change the userinfo string (alias of setinfo)" );
